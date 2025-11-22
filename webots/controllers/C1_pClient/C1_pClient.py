@@ -1,12 +1,14 @@
 """my_controller controller."""
 
+from math import atan2
 import numpy
 import xml.etree.ElementTree as ET
 
 
 # You may need to import some classes of the controller module. Ex:
 #  from controller import Robot, Motor, DistanceSensor
-from controller import Robot
+from controller import Robot # type: ignore
+from markov_belief import Belief
 
 CELLROWS=7
 CELLCOLS=14
@@ -161,10 +163,13 @@ if __name__ == '__main__':
     myrob.printMap()
   
     target_pos = myrob.abs_ref_pos.copy()
-
+    belief = Belief(mapc.labMap)
+    belief.print_cell_walls()
+    
     while myrob.step() != -1:
         # Read next movement from file
         command = commands_file.readline().strip()
+
         if command == "N":
             print("Moving North")
             target_pos[1] += CELL_SIZE
@@ -178,3 +183,30 @@ if __name__ == '__main__':
             print("Moving West")
             target_pos[0] -= CELL_SIZE
         myrob.move_to(target_pos)
+        measures = [s.getValue() for s in myrob.dist_sensors]
+        print(myrob.compass.getValues())
+        val = myrob.compass.getValues()
+        ang = atan2(val[0], val[2])
+        belief.measurement_update(measures,ang)
+        print("measures:", measures)
+        
+        if not command:
+            print(belief)
+            print(belief.most_probable_cell())
+
+            break
+
+        
+    # import numpy as np
+    # np.nparray(8,100)
+    # for i in range(100):
+    #     measures = [s.getValue() for s in myrob.dist_sensors]
+    #     print("measures:", measures)
+
+#P=B(X)*P(Z/X)
+#B(X)=preivius belevid
+#P(Z/X)-sensor model.
+#X-cell(center,diretion_robot)
+#Z-meusure
+def sensor_model(X,Y):
+    pass
