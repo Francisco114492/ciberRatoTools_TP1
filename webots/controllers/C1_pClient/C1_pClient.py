@@ -1,8 +1,15 @@
 """my_controller controller."""
 
-from math import atan2, degrees
+from math import atan2, degrees, radians
 import numpy
 import xml.etree.ElementTree as ET
+
+direction_to_angle = {
+    "N": 0,
+    "E": 90,
+    "S": 180,
+    "W": 270
+}
 
 
 # You may need to import some classes of the controller module. Ex:
@@ -184,16 +191,17 @@ if __name__ == '__main__':
             target_pos[0] -= CELL_SIZE
         myrob.move_to(target_pos)
         measures = [s.getValue() for s in myrob.dist_sensors]
-        print(myrob.compass.getValues())
-        val = myrob.compass.getValues()
-        ang = atan2(val[0], val[2])
+       
         if lastCommand is not None:
+            ang2 = direction_to_angle.get(lastCommand,1000)
             belief.motion_update(lastCommand)
-            belief.measurement_update(measures,ang)
+            # belief.measurement_update(measures,myrob.cur_dir-numpy.pi/2)
+            belief.measurement_update(measures,radians(-ang2))
+            print(degrees(myrob.cur_dir)%360,(-ang2)%360)
             print(belief)
 
         lastCommand=command
-        print("measures:", measures,degrees(ang)%360)
+        print("measures:", measures)
         
         if not command:
             print(belief)

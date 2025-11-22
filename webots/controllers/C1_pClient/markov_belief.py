@@ -177,6 +177,7 @@ class Belief:
     def hasWall(self, sensor_index, ang, point):
 
         ci, cj = point
+        # ang=0
         theta_sensor = (ang + devices[sensor_index]["orientation"]) % (2*math.pi)
 
         # N: 45° a 135°, E: 315°-45°, S: 225°-315°, W: 135°-225°
@@ -190,7 +191,8 @@ class Belief:
             dir = 'S'
         else:
             dir = 'E'
-
+        if point==(0,0):
+            print(sensor_index,dir,math.degrees(ang))    
         return self.cell_walls[ci][cj][dir]
     
     def sensor_model(self,measures,ang,point):
