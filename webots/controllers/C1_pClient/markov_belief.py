@@ -1,4 +1,5 @@
 import math
+import joblib
 import numpy as np
 
 
@@ -12,6 +13,9 @@ devices = {
     6: {"x": 0.022, "y": 0.025, "orientation": 2.37},
     7: {"x": 0.030, "y": 0.010, "orientation": 1.87},
 }
+
+def load_model(path="model_wall.pkl"):
+    return joblib.load(path)
 
 class Belief:
     def __init__(self, labMap):
@@ -28,6 +32,7 @@ class Belief:
                         for _ in range(self.cell_cols)] 
                         for _ in range(self.cell_rows)]
         self.belief = self._init_belief()
+        self.model = load_model()
     def __str__(self):
         text = "Belief matrix:\n"
         for i in reversed(range(self.cell_rows)):
@@ -100,28 +105,53 @@ class Belief:
             for j in range(self.cell_cols):
                 self.belief[i][j] /= total
 
+
+    def probabilidade_certo(self,metrica, has_wall):
+        prob_parede = self.model.predict_proba([[metrica]])[0][1]
+
+        if has_wall:
+            return prob_parede
+        else:
+            return 1 - prob_parede
+
     # -------------------------------------
     # Atualização de movimento
     # -------------------------------------
     def motion_update(self, move):
+        """
+        move ∈ { 'N','S','E','W' }
+        Usa cell_walls para determinar se a transição é possível.
+        """
         new_belief = [[0.0 for _ in range(self.cell_cols)] for _ in range(self.cell_rows)]
-        di, dj = 0, 0
-        if move == "N": di, dj = 2, 0
-        elif move == "S": di, dj = -2, 0
-        elif move == "E": di, dj = 0, 2
-        elif move == "W": di, dj = 0, -2
 
-        for i in range(0, self.cell_rows, 2):
-            for j in range(0, self.cell_cols, 2):
-                if self.labMap[i][j] != ' ':
+        # deltas no espaço de células → 1 célula por movimento
+        if move == "N":  dci, dcj = 1, 0
+        elif move == "S": dci, dcj = -1, 0
+        elif move == "E": dci, dcj = 0, 1
+        elif move == "W": dci, dcj = 0, -1
+        else:
+            raise ValueError("Movimento inválido: " + move)
+
+        for ci in range(self.cell_rows):
+            for cj in range(self.cell_cols):
+
+                p = self.belief[ci][cj]
+                if p == 0:
+                    continue  # nada para mover
+
+                # há parede na direção do movimento?
+                if self.cell_walls[ci][cj][move]:
+                    # movimento impossível → probabilidade fica na mesma célula
+                    new_belief[ci][cj] += p
                     continue
-                ni, nj = i + di, j + dj
-                # se não bate numa parede e é uma célula válida
-                if 0 <= ni < self.cell_rows and 0 <= nj < self.cell_cols and self.labMap[ni][nj] == ' ':
-                    new_belief[ni][nj] += self.belief[i][j]
+
+                # caso contrário tenta mover
+                nci, ncj = ci + dci, cj + dcj
+
+                if 0 <= nci < self.cell_rows and 0 <= ncj < self.cell_cols:
+                    new_belief[nci][ncj] += p
                 else:
-                    # se não se move (bateu na parede)
-                    new_belief[i][j] += self.belief[i][j]
+                    new_belief[ci][cj] += p
 
         self.belief = new_belief
         self.normalize()
@@ -167,7 +197,7 @@ class Belief:
         prob=1
         for sensor_index,measure in enumerate(measures):
             has_wall=self.hasWall(sensor_index, ang, point)
-            prob*=probabilidade_certo(measure,has_wall)
+            prob*=max(self.probabilidade_certo(measure,has_wall),0.1)
         return prob
 
     def most_probable_cell(self):

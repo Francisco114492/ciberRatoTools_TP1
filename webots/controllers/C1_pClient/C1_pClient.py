@@ -1,6 +1,6 @@
 """my_controller controller."""
 
-from math import atan2
+from math import atan2, degrees
 import numpy
 import xml.etree.ElementTree as ET
 
@@ -165,7 +165,7 @@ if __name__ == '__main__':
     target_pos = myrob.abs_ref_pos.copy()
     belief = Belief(mapc.labMap)
     belief.print_cell_walls()
-    
+    lastCommand=None
     while myrob.step() != -1:
         # Read next movement from file
         command = commands_file.readline().strip()
@@ -187,8 +187,13 @@ if __name__ == '__main__':
         print(myrob.compass.getValues())
         val = myrob.compass.getValues()
         ang = atan2(val[0], val[2])
-        belief.measurement_update(measures,ang)
-        print("measures:", measures)
+        if lastCommand is not None:
+            belief.motion_update(lastCommand)
+            belief.measurement_update(measures,ang)
+            print(belief)
+
+        lastCommand=command
+        print("measures:", measures,degrees(ang)%360)
         
         if not command:
             print(belief)
@@ -196,7 +201,7 @@ if __name__ == '__main__':
 
             break
 
-        
+                    
     # import numpy as np
     # np.nparray(8,100)
     # for i in range(100):
