@@ -163,6 +163,7 @@ if __name__ == '__main__':
   
     target_pos = myrob.abs_ref_pos.copy()
     belief = Belief(mapc.labMap)
+    belief.write_belief_in_file("localization.out")
     belief.print_cell_walls()
 
     lastCommand=None

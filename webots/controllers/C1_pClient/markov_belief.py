@@ -1,10 +1,4 @@
 import math
-try:
-    import joblib
-    load_model_enable=True
-
-except:
-    load_model_enable=False
 
 
 devices = {
@@ -19,8 +13,6 @@ devices = {
 }
 PROB_CONST=1146/8000
 
-def load_model(path="model_wall.pkl"):
-    return joblib.load(path) # type: ignore
 def calculate_probability(metrica: float, has_wall: bool) -> float:
     if has_wall:
         if metrica > 85:
@@ -37,19 +29,18 @@ def calculate_probability(metrica: float, has_wall: bool) -> float:
 class Belief:
     def __init__(self, labMap):
         """
-        labMap: mapa carregado pela classe Map do my_controller
+        labMap: map loaded by the Map class of my_controller
         """
         self.labMap = labMap
         self.lab_rows = len(labMap)        # ex: 13
         self.lab_cols = len(labMap[0])     # ex: 27
-        # número de células (cada 2 posições do labMap correspondem a uma célula)
+        # number of cells (every 2 positions in the labMap correspond to one cell)
         self.cell_rows = (self.lab_rows + 1) // 2   # ex: 7
         self.cell_cols = (self.lab_cols + 1) // 2   # ex: 14
         self.cell_walls = [[{'N': False, 'S': False, 'E': False, 'W': False} 
                         for _ in range(self.cell_cols)] 
                         for _ in range(self.cell_rows)]
         self.belief = self._init_belief()
-        self.model = load_model()
     def __str__(self):
         text = "Belief matrix:\n"
         for i in reversed(range(self.cell_rows)):
@@ -58,7 +49,7 @@ class Belief:
     
     
     def __repr__(self):
-        """Versão compacta: mostra intensidade com símbolos."""
+        """Compact version: shows intensity with symbols."""
         text = "Belief heatmap:\n"
         for i in reversed(range(0, self.cell_rows)):
             for j in range(0, self.cell_cols):
@@ -74,23 +65,23 @@ class Belief:
 
     def _init_belief(self):
         cells = []
-        # percorre índices de células (0..cell_rows-1), mapeando para labMap em li=i*2, lj=j*2
+        # traverses cell indices (0..cell_rows-1), mapping to labMap in li=i*2, lj=j*2
         for ci in range(self.cell_rows):
             for cj in range(self.cell_cols):
                 li, lj = ci * 2, cj * 2
                 if 0 <= li < self.lab_rows and 0 <= lj < self.lab_cols:
                     if self.labMap[li][lj] == ' ':
                         cells.append((ci, cj))
-                        # Norte
+                        # North
                         if li == self.lab_rows - 1 or self.labMap[li+1][lj] in ['-', '+']:
                             self.cell_walls[ci][cj]['N'] = True
-                        # Sul
+                        # South
                         if li == 0 or self.labMap[li-1][lj] in ['-', '+']:
                             self.cell_walls[ci][cj]['S'] = True
-                        # Este
+                        # East
                         if lj == self.lab_cols - 1 or self.labMap[li][lj+1] in ['|', '+']:
                             self.cell_walls[ci][cj]['E'] = True
-                        # Oeste
+                        # West
                         if lj == 0 or self.labMap[li][lj-1] in ['|', '+']:
                             self.cell_walls[ci][cj]['W'] = True
 
@@ -111,15 +102,8 @@ class Belief:
                 self.belief[i][j] /= total
 
 
-    def predict_prob(self,metrica, has_wall):
-        prob_parede = self.model.predict_proba([[metrica]])[0][1]
-        if has_wall:
-            return prob_parede
-        else:
-            return 1 - prob_parede
-
     # -------------------------------------
-    # Atualização de movimento
+    # Movement update
     # -------------------------------------
     def motion_update(self, move):
         new_belief = [[0.0 for _ in range(self.cell_cols)] for _ in range(self.cell_rows)]
@@ -153,7 +137,7 @@ class Belief:
         self.normalize()
 
     # -------------------------------------
-    # Atualização de medição
+    # Measurement update
     # -------------------------------------
     def measurement_update(self, measures,ang):
         new_belief = [[0.0 for _ in range(self.cell_cols)] for _ in range(self.cell_rows)]
@@ -189,7 +173,6 @@ class Belief:
         return self.cell_walls[ci][cj][dir]
     
     def sensor_model(self,measures,ang,point):
-        # prob_list=[]
         prob=1
         for sensor_index,measure in enumerate(measures):
             has_wall=self.hasWall(sensor_index, ang, point)
