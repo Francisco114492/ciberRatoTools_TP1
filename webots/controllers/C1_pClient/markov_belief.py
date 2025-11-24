@@ -196,11 +196,18 @@ class Belief:
         return self.cell_walls[ci][cj][dir]
     
     def sensor_model(self,measures,ang,point):
+        # prob_list=[]
         prob=1
         for sensor_index,measure in enumerate(measures):
             has_wall=self.hasWall(sensor_index, ang, point)
-            prob*=max(self.probabilidade_certo(measure,has_wall),0.1)
+            prob*=max(probabilidade_certo(measure,has_wall),0.1)
         return prob
+        #     if True:
+        #         prob2=max(probabilidade_certo(measure,has_wall),0.1)
+        #         if point==(0,0):
+        #             print("Sensor",prob2,has_wall)  
+        #         prob_list.append(prob2)
+        # prob=sum(prob_list)/len(prob_list)
 
     def most_probable_cell(self):
         max_p = 0
@@ -228,19 +235,16 @@ class Belief:
                     s += "W" if w['W'] else "."
                     print(f"({i},{j}):{s}", end="  ")
                 print()
-
+PROB_CONST=1146/8000
 def probabilidade_certo(metrica: float, has_wall: bool) -> float:
     if has_wall:
-        if metrica > 140:
-            return 0.98
-        elif metrica >= 75:
-            return 0.85
+        if metrica > 85:
+            return 1-PROB_CONST
         else:
-            return 0.40
+            return PROB_CONST
     else:
-        if metrica > 140:
-            return 0.01
-        elif metrica >= 75:
-            return 0.40
+ 
+        if metrica >= 85:
+            return 0
         else:
-            return 0.60
+            return 1
