@@ -174,6 +174,7 @@ if __name__ == '__main__':
     belief.print_cell_walls()
     lastCommand=None
     last_dir=None
+    last_measures=None
     while myrob.step() != -1:
         # Read next movement from file
         command = commands_file.readline().strip()
@@ -193,10 +194,10 @@ if __name__ == '__main__':
         myrob.move_to(target_pos)
         measures = [s.getValue() for s in myrob.dist_sensors]
        
-        if lastCommand is not None and last_dir:
+        if lastCommand is not None and last_dir and last_measures:
             ang2 = direction_to_angle.get(lastCommand,1000)
             belief.motion_update(lastCommand)
-            belief.measurement_update(measures,last_dir-numpy.pi/2)
+            belief.measurement_update(last_measures,last_dir-numpy.pi/2)
             # belief.measurement_update(measures,radians(-ang2))
             print(lastCommand,degrees(last_dir)%360,(-ang2)%360)
             print(belief)
@@ -206,6 +207,7 @@ if __name__ == '__main__':
 
         lastCommand=command
         last_dir=myrob.cur_dir
+        last_measures=measures
         print("measures:", measures,lastCommand)
         
         if not command:

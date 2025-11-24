@@ -33,6 +33,8 @@ class Belief:
                         for _ in range(self.cell_rows)]
         self.belief = self._init_belief()
         self.model = load_model()
+        self.index=0
+        self.array=[(5,1), (5,2), (5,3), (5,4), (6,4), (6,5), (6,6), (6,7), (6,8), (5,8)]
     def __str__(self):
         text = "Belief matrix:\n"
         for i in reversed(range(self.cell_rows)):
@@ -161,6 +163,7 @@ class Belief:
     # -------------------------------------
     def measurement_update(self, measures,ang):
         new_belief = [[0.0 for _ in range(self.cell_cols)] for _ in range(self.cell_rows)]
+        print("Cell:",self.array[self.index])
         for ci in range(self.cell_rows):
             for cj in range(self.cell_cols):
                 li, lj = ci * 2, cj * 2 
@@ -173,6 +176,7 @@ class Belief:
 
         self.belief = new_belief
         self.normalize()
+        self.index+=1
 
     def hasWall(self, sensor_index, ang, point):
 
@@ -191,8 +195,8 @@ class Belief:
             dir = 'S'
         else:
             dir = 'E'
-        if point==(0,0):
-            print(sensor_index,dir,math.degrees(ang))    
+        if point==self.array[self.index]:
+            print(sensor_index,dir,theta_deg,round(math.degrees(ang),3))    
         return self.cell_walls[ci][cj][dir]
     
     def sensor_model(self,measures,ang,point):
@@ -200,11 +204,14 @@ class Belief:
         prob=1
         for sensor_index,measure in enumerate(measures):
             has_wall=self.hasWall(sensor_index, ang, point)
-            prob*=max(probabilidade_certo(measure,has_wall),0.1)
+            prob2=max(probabilidade_certo(measure,has_wall),0.1)
+            prob*=prob2
+            if point==self.array[self.index]:
+                print("Sensor:",measure,round(prob2,5),has_wall) 
         return prob
         #     if True:
         #         prob2=max(probabilidade_certo(measure,has_wall),0.1)
-        #         if point==(0,0):
+        #         if point==self.array[self.index]:
         #             print("Sensor",prob2,has_wall)  
         #         prob_list.append(prob2)
         # prob=sum(prob_list)/len(prob_list)
