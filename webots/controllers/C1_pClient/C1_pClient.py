@@ -192,7 +192,6 @@ if __name__ == '__main__':
             print("measures:", last_measures, "\ncommand:",lastCommand,"\ndirection:", degrees(last_dir)%360)
             belief.motion_update(lastCommand)
             belief.measurement_update(last_measures,last_dir-numpy.pi/2)
-            # belief.measurement_update(measures,radians(-ang2))
             print(belief)
             belief.write_belief_in_file("localization.out")
         else:
@@ -206,7 +205,6 @@ if __name__ == '__main__':
         last_measures=measures
         
         if not command:
-            # print(belief)
             print(belief.most_probable_cell())
 
             break
