@@ -11,17 +11,18 @@ devices = {
     6: {"x": 0.022, "y": 0.025, "orientation": 2.37},
     7: {"x": 0.030, "y": 0.010, "orientation": 1.87},
 }
+
 PROB_CONST=1146/8000
 
-def calculate_probability(metrica: float, has_wall: bool) -> float:
+def calculate_probability(measure: float, has_wall: bool) -> float:
     if has_wall:
-        if metrica > 85:
+        if measure > 85:
             return 1-PROB_CONST
         else:
             return PROB_CONST
     else:
  
-        if metrica >= 85:
+        if measure >= 85:
             return 0
         else:
             return 1
