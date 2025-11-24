@@ -11,21 +11,28 @@ devices = {
     6: {"x": 0.022, "y": 0.025, "orientation": 2.37},
     7: {"x": 0.030, "y": 0.010, "orientation": 1.87},
 }
+#P(~W|W)
+PROB_WALL_CONST=1146/8000
+#P(W|~W)
+PROB_NOWALL_CONST=3/8000 #rule of 3
 
-PROB_CONST=1146/8000
 
-def calculate_probability(measure: float, has_wall: bool) -> float:
+def calculate_probability(metrica: float, has_wall: bool) -> float:
     if has_wall:
-        if measure > 85:
-            return 1-PROB_CONST
+        if metrica > 85:
+            #P(W|W)
+            return 1-PROB_WALL_CONST
         else:
-            return PROB_CONST
+            #P(~W|W)
+            return PROB_WALL_CONST
     else:
  
-        if measure >= 85:
-            return 0
+        if metrica >= 85:
+            #P(W|~W)
+            return PROB_NOWALL_CONST
         else:
-            return 1
+            #P(~W|~W)
+            return 1-PROB_NOWALL_CONST
 
 class Belief:
     def __init__(self, labMap):
@@ -177,7 +184,7 @@ class Belief:
         prob=1
         for sensor_index,measure in enumerate(measures):
             has_wall=self.hasWall(sensor_index, ang, point)
-            prob*=max(calculate_probability(measure,has_wall),0.1)
+            prob*=calculate_probability(measure,has_wall)
         return prob
 
 
