@@ -1,6 +1,10 @@
 import math
-import joblib
-import numpy as np
+try:
+    import joblib
+    load_model_enable=True
+
+except:
+    load_model_enable=False
 
 
 devices = {
@@ -13,9 +17,22 @@ devices = {
     6: {"x": 0.022, "y": 0.025, "orientation": 2.37},
     7: {"x": 0.030, "y": 0.010, "orientation": 1.87},
 }
+PROB_CONST=1146/8000
 
 def load_model(path="model_wall.pkl"):
-    return joblib.load(path)
+    return joblib.load(path) # type: ignore
+def calculate_probability(metrica: float, has_wall: bool) -> float:
+    if has_wall:
+        if metrica > 85:
+            return 1-PROB_CONST
+        else:
+            return PROB_CONST
+    else:
+ 
+        if metrica >= 85:
+            return 0
+        else:
+            return 1
 
 class Belief:
     def __init__(self, labMap):
@@ -33,8 +50,6 @@ class Belief:
                         for _ in range(self.cell_rows)]
         self.belief = self._init_belief()
         self.model = load_model()
-        self.index=0
-        self.array=[(5,1), (5,2), (5,3), (5,4), (6,4), (6,5), (6,6), (6,7), (6,8), (5,8)]
     def __str__(self):
         text = "Belief matrix:\n"
         for i in reversed(range(self.cell_rows)):
@@ -42,18 +57,6 @@ class Belief:
         return text
     
     
-    # def __str__(self):
-    #     """Representação detalhada com valores numéricos."""
-    #     text = "Belief matrix (with map layout):\n"
-    #     for i in reversed(range(self.cell_rows)):
-    #         for j in range(self.cell_cols):
-    #             if self.labMap[i][j] == ' ':
-    #                 text += f"{self.belief[i//2][j//2]*100:5.2f} "
-    #             else:
-    #                 text += self.labMap[i][j] + "  "
-    #         text += "\n"
-    #     return text
-
     def __repr__(self):
         """Versão compacta: mostra intensidade com símbolos."""
         text = "Belief heatmap:\n"
@@ -108,9 +111,8 @@ class Belief:
                 self.belief[i][j] /= total
 
 
-    def probabilidade_certo(self,metrica, has_wall):
+    def predict_prob(self,metrica, has_wall):
         prob_parede = self.model.predict_proba([[metrica]])[0][1]
-
         if has_wall:
             return prob_parede
         else:
@@ -120,34 +122,26 @@ class Belief:
     # Atualização de movimento
     # -------------------------------------
     def motion_update(self, move):
-        """
-        move ∈ { 'N','S','E','W' }
-        Usa cell_walls para determinar se a transição é possível.
-        """
         new_belief = [[0.0 for _ in range(self.cell_cols)] for _ in range(self.cell_rows)]
 
-        # deltas no espaço de células → 1 célula por movimento
         if move == "N":  dci, dcj = 1, 0
         elif move == "S": dci, dcj = -1, 0
         elif move == "E": dci, dcj = 0, 1
         elif move == "W": dci, dcj = 0, -1
         else:
-            raise ValueError("Movimento inválido: " + move)
+            raise ValueError("Invalid move: " + move)
 
         for ci in range(self.cell_rows):
             for cj in range(self.cell_cols):
 
                 p = self.belief[ci][cj]
                 if p == 0:
-                    continue  # nada para mover
+                    continue
 
-                # há parede na direção do movimento?
                 if self.cell_walls[ci][cj][move]:
-                    # movimento impossível → probabilidade fica na mesma célula
                     new_belief[ci][cj] += p
                     continue
 
-                # caso contrário tenta mover
                 nci, ncj = ci + dci, cj + dcj
 
                 if 0 <= nci < self.cell_rows and 0 <= ncj < self.cell_cols:
@@ -163,7 +157,6 @@ class Belief:
     # -------------------------------------
     def measurement_update(self, measures,ang):
         new_belief = [[0.0 for _ in range(self.cell_cols)] for _ in range(self.cell_rows)]
-        print("Cell:",self.array[self.index])
         for ci in range(self.cell_rows):
             for cj in range(self.cell_cols):
                 li, lj = ci * 2, cj * 2 
@@ -176,15 +169,13 @@ class Belief:
 
         self.belief = new_belief
         self.normalize()
-        self.index+=1
 
     def hasWall(self, sensor_index, ang, point):
 
         ci, cj = point
-        # ang=0
         theta_sensor = (ang + devices[sensor_index]["orientation"]) % (2*math.pi)
 
-        # N: 45° a 135°, E: 315°-45°, S: 225°-315°, W: 135°-225°
+        # N: 45° - 135°, W: 135°-225°, S: 225°-315°, E: 315°-360 and 0-45°
         theta_deg = math.degrees(theta_sensor) % 360
 
         if 45 <= theta_deg < 135:
@@ -195,8 +186,6 @@ class Belief:
             dir = 'S'
         else:
             dir = 'E'
-        if point==self.array[self.index]:
-            print(sensor_index,dir,theta_deg,round(math.degrees(ang),3))    
         return self.cell_walls[ci][cj][dir]
     
     def sensor_model(self,measures,ang,point):
@@ -204,17 +193,9 @@ class Belief:
         prob=1
         for sensor_index,measure in enumerate(measures):
             has_wall=self.hasWall(sensor_index, ang, point)
-            prob2=max(probabilidade_certo(measure,has_wall),0.1)
-            prob*=prob2
-            if point==self.array[self.index]:
-                print("Sensor:",measure,round(prob2,5),has_wall) 
+            prob*=max(calculate_probability(measure,has_wall),0.1)
         return prob
-        #     if True:
-        #         prob2=max(probabilidade_certo(measure,has_wall),0.1)
-        #         if point==self.array[self.index]:
-        #             print("Sensor",prob2,has_wall)  
-        #         prob_list.append(prob2)
-        # prob=sum(prob_list)/len(prob_list)
+
 
     def most_probable_cell(self):
         max_p = 0
@@ -226,12 +207,8 @@ class Belief:
                     pos = (i, j)
         return pos
     
-    def print_cell_walls(self, ci=None, cj=None):
-        if ci is not None and cj is not None:
-            walls = self.cell_walls[ci][cj]
-            print(f"Célula ({ci},{cj}): N={walls['N']} S={walls['S']} E={walls['E']} W={walls['W']}")
-        else:
-            print("Estado das paredes de todas as células:")
+    def print_cell_walls(self):
+            print("Status of the walls of all cells:")
             for i in reversed(range(self.cell_rows)):
                 for j in range(self.cell_cols):
                     w = self.cell_walls[i][j]
@@ -242,16 +219,9 @@ class Belief:
                     s += "W" if w['W'] else "."
                     print(f"({i},{j}):{s}", end="  ")
                 print()
-PROB_CONST=1146/8000
-def probabilidade_certo(metrica: float, has_wall: bool) -> float:
-    if has_wall:
-        if metrica > 85:
-            return 1-PROB_CONST
-        else:
-            return PROB_CONST
-    else:
- 
-        if metrica >= 85:
-            return 0
-        else:
-            return 1
+    def write_belief_in_file(self,filename):
+        text = ""
+        for i in reversed(range(self.cell_rows)):
+            text += " ".join(f"{self.belief[i][j]:.3f}" for j in range(self.cell_cols)) + "\n"
+        with open(filename,"a") as file:
+            file.write(text+"\n")

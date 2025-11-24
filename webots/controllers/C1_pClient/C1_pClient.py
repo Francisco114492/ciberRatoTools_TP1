@@ -1,16 +1,8 @@
 """my_controller controller."""
 
-from math import atan2, degrees, radians
+from math import degrees
 import numpy
 import xml.etree.ElementTree as ET
-
-direction_to_angle = {
-    "N": 0,
-    "E": 90,
-    "S": 180,
-    "W": 270
-}
-
 
 # You may need to import some classes of the controller module. Ex:
 #  from controller import Robot, Motor, DistanceSensor
@@ -172,6 +164,7 @@ if __name__ == '__main__':
     target_pos = myrob.abs_ref_pos.copy()
     belief = Belief(mapc.labMap)
     belief.print_cell_walls()
+
     lastCommand=None
     last_dir=None
     last_measures=None
@@ -195,20 +188,21 @@ if __name__ == '__main__':
         measures = [s.getValue() for s in myrob.dist_sensors]
        
         if lastCommand is not None and last_dir and last_measures:
-            ang2 = direction_to_angle.get(lastCommand,1000)
+            print("measures:", last_measures, "\ncommand:",lastCommand,"\ndirection:", degrees(last_dir)%360)
             belief.motion_update(lastCommand)
             belief.measurement_update(last_measures,last_dir-numpy.pi/2)
             # belief.measurement_update(measures,radians(-ang2))
-            print(lastCommand,degrees(last_dir)%360,(-ang2)%360)
             print(belief)
+            belief.write_belief_in_file("localization.out")
         else:
+            print("measures:", measures)
+
             belief.measurement_update(measures,myrob.cur_dir-numpy.pi/2)
             print(belief)
 
         lastCommand=command
         last_dir=myrob.cur_dir
         last_measures=measures
-        print("measures:", measures,lastCommand)
         
         if not command:
             # print(belief)
@@ -216,17 +210,3 @@ if __name__ == '__main__':
 
             break
 
-                    
-    # import numpy as np
-    # np.nparray(8,100)
-    # for i in range(100):
-    #     measures = [s.getValue() for s in myrob.dist_sensors]
-    #     print("measures:", measures)
-
-#P=B(X)*P(Z/X)
-#B(X)=preivius belevid
-#P(Z/X)-sensor model.
-#X-cell(center,diretion_robot)
-#Z-meusure
-def sensor_model(X,Y):
-    pass
