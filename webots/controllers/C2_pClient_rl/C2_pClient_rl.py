@@ -111,6 +111,26 @@ class DQNAgent:
             self.model.eval()
             print(">>> MODELO CARREGADO <<<")
 
+    def load_memory(self):
+        if os.path.exists("dqn_memory.pkl"):
+            try:
+                with open("dqn_memory.pkl", "rb") as f:
+                    # Carrega a lista do ficheiro
+                    loaded_memory = pickle.load(f)
+                    
+                    # Garante que não excedemos a capacidade atual (caso tenhas mudado o limite)
+                    if len(loaded_memory) > self.memory_capacity:
+                        self.memory = loaded_memory[-self.memory_capacity:]
+                    else:
+                        self.memory = loaded_memory
+                        
+                print(f">>> MEMÓRIA CARREGADA: {len(self.memory)} experiências recuperadas.")
+            except Exception as e:
+                print(f"!!! ERRO AO CARREGAR MEMÓRIA: {e} (Começando com memória vazia)")
+                self.memory = []
+        else:
+            print(">>> Nenhuma memória encontrada (dqn_memory.pkl). Começando do zero.")
+
 # ==========================================
 # 3. SETUP DO ROBÔ
 # ==========================================
@@ -141,7 +161,7 @@ for s in dist_sensors:
 # ==========================================
 # 4. AÇÕES E AGENTE
 # ==========================================
-CRUISE_SPEED = 5.0
+CRUISE_SPEED = 3.0
 actions = [
     (CRUISE_SPEED, CRUISE_SPEED),
     (CRUISE_SPEED*0.5, CRUISE_SPEED),
@@ -155,7 +175,7 @@ if os.path.exists("dqn_model.pth"):
     agent.load()
     if not TRAINING_MODE:
         agent.epsilon = 0.0
-
+agent.load_memory()
 previous_score = 0
 
 def normalize_sensors(v):
@@ -180,60 +200,57 @@ def calculate_reward(dist_features, action, score, prev_score):
     reward = -0.02
     done = False
 
-    # 1. Bónus de Score (Prioridade Máxima)
+    # 1. Bónus de Score
     if score > prev_score:
         reward += 150.0
-        string += "+150.0"
+
+    # --- Lógica de Paredes/Colisão CORRIGIDA ---
+    max_sensor = max(dist_features)
+    
+    if max_sensor > 0.55:
+        reward -= 150.0
+        done = True
+        return reward, done # Sai logo da função
+
+    # # 2º Verificar PERIGO (Apenas aviso)
+    # if max_sensor > 0.35:
+    #     reward -= 0.5 
+
+    if max_sensor > 0.2:
+        penalty = (max_sensor * 10.0) ** 2  / 10.0 
+        reward -= penalty 
+    
+    # -------------------------------------------
 
     prox_direita = max(dist_features[0], dist_features[1], dist_features[2])
     prox_esquerda = max(dist_features[5], dist_features[6], dist_features[7])
     
-    threshold = 0.2 # Distância a partir da qual ele começa a "sentir" a parede
+    threshold = 0.2 
 
     # Se houver parede à DIREITA
     if prox_direita > threshold:
-        if action in [1, 3]: # Ações de virar à ESQUERDA (1:suave, 3:forte)
-            reward += prox_direita * 0.1  # Bónus: quanto mais perto da parede, mais ganha por virar
-            # print("Boa! A fugir da parede da direita.")
-        elif action in [2, 4]: # Se tentar virar para CIMA da parede
-            reward -= prox_direita * 1.0  # Penalização pesada
+        if action in [1, 3]: 
+            reward += prox_direita * 0.1
+        elif action in [2, 4]: 
+            reward -= prox_direita * 1.0 
 
     # Se houver parede à ESQUERDA
     if prox_esquerda > threshold:
-        if action in [2, 4]: # Ações de virar à DIREITA (2:suave, 4:forte)
+        if action in [2, 4]: 
             reward += prox_esquerda * 0.1
-            # print("Boa! A fugir da parede da esquerda.")
         elif action in [1, 3]:
             reward -= prox_esquerda * 1.0
 
-    if action == 0: # Se não está a ir em frente (Ação 0)
+    if action == 0: 
         reward += 0.1
-
-    # 2. Sensores e Colisão
-    max_sensor = max(dist_features)
-    if max_sensor > 0.35:
-        reward -= 0.5
-        #print("Close")
-    elif max_sensor > 0.45:
-        reward -= 150.0 # Penalização pesada
-        string += "-150.0"
-        done = True
-        print(string)
-        return reward, done
 
     vL, vR = actions[action]
     speed = (vL + vR) / 10.0 
 
     if speed > 0:
         reward += speed * 0.5
-        string += f"+{speed*0.5:.2f}"
     else:
         reward -= 1.5
-        string += "-1.5"
-
-    if max_sensor > 0.2:
-        reward -= (max_sensor ** 2) * 2.0
-        string += f"-{(max_sensor ** 2) * 2.0:.2f}"
 
     return reward, done
 
@@ -302,6 +319,8 @@ while robot.step(timeStep) != -1:
             # Parar motores
             leftMotor.setVelocity(0.0)
             rightMotor.setVelocity(0.0)
+            if score < 40 and agent.epsilon < 0.6:
+                agent.epsilon = 0.7
             
             if TRAINING_MODE:
                 print(f"Treinando... (Score Final: {score})")
