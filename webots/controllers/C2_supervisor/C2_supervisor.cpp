@@ -2,6 +2,8 @@
  * world_builder C++ supervisor controller.
  */
 #include <webots/Supervisor.hpp>
+#include <webots/Emitter.hpp>
+#include <webots/Receiver.hpp>
 #include <iostream>
 #include <string>
 #include <math.h>
@@ -36,6 +38,13 @@ int scoreControl = 0;
 
 // Get the e-puck node by DEF name (e.g., "EPUCK")
 webots::Node *epuck_node;
+
+// --- GLOBAIS ADICIONADAS PARA O RESET ---
+webots::Emitter *emitter;
+webots::Field *trans_field; 
+double start_pos[3] = {0, 0, 0};
+webots::Receiver *receiver_sup;
+// ---------------------------------------
 
 #define PATHCUBESIZE (0.15)
 
@@ -144,6 +153,9 @@ void update_score()
         if (nextPathInd >= nCellPath)
             nextPathInd = 0;
         scoreControl += 10;
+        if (emitter) {
+            emitter->send(&scoreControl, sizeof(int));
+        }
     }
 }
 
@@ -154,6 +166,20 @@ int main(int argc, char **argv)
     // ---
     webots::Supervisor *supervisor = new webots::Supervisor();
     int timeStep = (int)supervisor->getBasicTimeStep();
+
+    // --- CONFIGURAÇÃO EMITTER / RECEIVER ---
+    emitter = supervisor->getEmitter("emitter_supervisor");
+    if(emitter) emitter->setChannel(1);
+
+    receiver_sup = supervisor->getReceiver("receiver_supervisor");
+    if (receiver_sup) {
+        receiver_sup->enable(timeStep);
+        receiver_sup->setChannel(2); 
+    }
+
+    if (emitter == NULL) std::cerr << "ERRO: Emitter do Supervisor não encontrado!" << std::endl;
+    if (receiver_sup == NULL) std::cerr << "ERRO: Receiver do Supervisor não encontrado!" << std::endl;
+    // ---------------------------------------
 
     // ---
     // 1a. GET MAXIMUM SIMULATION TIME
@@ -220,8 +246,12 @@ int main(int argc, char **argv)
     // create the cell path of the closed loop to be used by update_score
     build_cell_path(labHandler->getLab());
 
+    // --- ROBOT SETUP CORRIGIDO ---
     // get robot
     epuck_node = supervisor->getFromDef("EPUCK");
+    
+    // Obter o campo 'translation' DEPOIS de encontrar o robô (isto evita o crash)
+    trans_field = epuck_node->getField("translation");
 
     // Reposition robot to first target area of maze
     webots::Field *translationField = epuck_node->getField("translation");
@@ -234,13 +264,30 @@ int main(int argc, char **argv)
         //std::cout << "E-puck repositioned." << std::endl;
     }
     
+    // Guardar a posição inicial para o RESET
+    const double *pos = trans_field->getSFVec3f();
+    start_pos[0] = pos[0];
+    start_pos[1] = pos[1];
+    start_pos[2] = pos[2];
+    // ----------------------------
+    
     // Get the PID of robot controller
     int robot_pid = get_sibling_pid();
 
     if (robot_pid == 0) {
         fprintf(stderr,"Could not get Robot Controller PID.\n");
         supervisor->simulationQuit(2);
-    }    
+    }
+
+    webots::Field *rot_field = epuck_node->getField("rotation");
+    double start_rot[4] = {0,0,1,0};
+    if (rot_field) {
+    const double *rot = rot_field->getSFRotation();
+    start_rot[0] = rot[0];
+    start_rot[1] = rot[1];
+    start_rot[2] = rot[2];
+    start_rot[3] = rot[3];
+    }
 
     // ---
     // 4. MAIN LOOP (Optional)
@@ -250,6 +297,36 @@ int main(int argc, char **argv)
     // for the simulation to continue.
     while (supervisor->step(timeStep) != -1)
     {
+        // --- CÓDIGO DE RESET ADICIONADO ---
+        if (receiver_sup && receiver_sup->getQueueLength() > 0) {
+            const char *msg = (const char *)receiver_sup->getData();
+            int dataSize = receiver_sup->getDataSize();
+
+            if (dataSize >= 5 && strncmp(msg, "RESET", 5) == 0) {
+                std::cout << ">>> SUPERVISOR: Recebido comando RESET <<<" << std::endl;
+
+                // 1. Teleporte
+                trans_field->setSFVec3f(start_pos);
+                
+                // 2. Reset de Rotação (importante para não começar virado para a parede)
+                webots::Field *rot_field = epuck_node->getField("rotation");
+                double start_rot[4] = {0, 0, 1, 0}; // Ajuste conforme necessário
+                rot_field->setSFRotation(start_rot);
+                
+                epuck_node->resetPhysics();
+                
+                // 3. Reset de Variáveis de Score
+                scoreControl = 0;
+                nextPathInd = 0; 
+                
+                // 4. Enviar confirmação (Score 0) imediatamente
+                int zero = 0;
+                emitter->send(&zero, sizeof(int));
+            }
+            receiver_sup->nextPacket();
+        }
+        // ----------------------------------
+
         // Get the current simulation time.
         double currentTime = supervisor->getTime();
 
