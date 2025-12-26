@@ -145,10 +145,10 @@ void build_cell_path(cbLab *lab)
 }
 
 void update_score()
-{
+{   
     struct cell_t curCell = getRobotCell();
     if (curCell.x == controlCellPath[nextPathInd].x && curCell.y == controlCellPath[nextPathInd].y)
-    {
+    {   
         nextPathInd++;
         if (nextPathInd >= nCellPath)
             nextPathInd = 0;
@@ -298,32 +298,31 @@ int main(int argc, char **argv)
     while (supervisor->step(timeStep) != -1)
     {
         // --- CÓDIGO DE RESET ADICIONADO ---
-        if (receiver_sup && receiver_sup->getQueueLength() > 0) {
+        while (receiver_sup && receiver_sup->getQueueLength() > 0) {
             const char *msg = (const char *)receiver_sup->getData();
             int dataSize = receiver_sup->getDataSize();
 
             if (dataSize >= 5 && strncmp(msg, "RESET", 5) == 0) {
-                std::cout << ">>> SUPERVISOR: Recebido comando RESET <<<" << std::endl;
-
-                // 1. Teleporte
-                trans_field->setSFVec3f(start_pos);
-                
-                // 2. Reset de Rotação (importante para não começar virado para a parede)
-                webots::Field *rot_field = epuck_node->getField("rotation");
-                double start_rot[4] = {0, 0, 1, 0}; // Ajuste conforme necessário
-                rot_field->setSFRotation(start_rot);
-                
-                epuck_node->resetPhysics();
-                
-                // 3. Reset de Variáveis de Score
-                scoreControl = 0;
-                nextPathInd = 0; 
-                
-                // 4. Enviar confirmação (Score 0) imediatamente
-                int zero = 0;
-                emitter->send(&zero, sizeof(int));
+                static double lastResetTime = -1.0;
+                if (supervisor->getTime() > lastResetTime + 0.5) { 
+                    std::cout << ">>> SUPERVISOR: Executando RESET e limpando fila... <<<" << std::endl;
+                    
+                    trans_field->setSFVec3f(start_pos);
+                    webots::Field *rot_field = epuck_node->getField("rotation");
+                    double start_rot[4] = {0, 0, 1, 0};
+                    if (rot_field) rot_field->setSFRotation(start_rot);
+                    
+                    epuck_node->resetPhysics();
+                    
+                    scoreControl = 0;
+                    nextPathInd = 0;
+                    
+                    // int zero = 0;
+                    // emitter->send(&zero, sizeof(int));
+                    lastResetTime = supervisor->getTime();
+                }
             }
-            receiver_sup->nextPacket();
+            receiver_sup->nextPacket(); 
         }
         // ----------------------------------
 
@@ -340,17 +339,18 @@ int main(int argc, char **argv)
         std::string scoreText;
 
         // Check if the simulation time has exceeded the maximum duration.
-        if (currentTime >= MAX_TIME_SECONDS)
-        {
-            // The argument 0 indicates a successful exit.
-            scoreText = "Final Score: " + std::to_string(scoreControl);
-        }
-        else {
-            // Increment the score (this is just an example, replace with your logic)
-            update_score();
-            scoreText = "Score: " + std::to_string(scoreControl);
-        }
+        
+        // if (currentTime >= MAX_TIME_SECONDS)
+        // {
+        //     // The argument 0 indicates a successful exit.
+        //     scoreText = "Final Score: " + std::to_string(scoreControl);
+        // }
+        // else {
+        //     // Increment the score (this is just an example, replace with your logic)
 
+        // }
+        update_score();
+        scoreText = "Score: " + std::to_string(scoreControl);
         // Display the label
         supervisor->setLabel(0, scoreText, 0.6, 0.01, 0.1, 0xFF0000, 0.0, "Arial");
     }

@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import os
+import pickle
 from controller import Robot
 
 TRAINING_MODE = True 
@@ -41,7 +42,7 @@ class DQNAgent:
         self.optimizer = optim.Adam(self.model.parameters(), lr=5e-4)
         self.criterion = nn.MSELoss()
 
-        self.epsilon = 0.7 if TRAINING_MODE else 0.0 
+        self.epsilon = 1.0 if TRAINING_MODE else 0.0 
         self.epsilon_min = 0.15
         self.epsilon_decay = 0.9995
         self.gamma = 0.99 
@@ -97,6 +98,12 @@ class DQNAgent:
 
     def save(self):
         torch.save(self.model.state_dict(), "dqn_model.pth")
+
+    def save_memory(self):
+        # Guarda apenas as últimas 30.000 experiências para o ficheiro não ser gigante
+        with open("dqn_memory.pkl", "wb") as f:
+            pickle.dump(self.memory[-30000:], f)
+        print(">>> MEMÓRIA DE EXPERIÊNCIA GUARDADA EM DISCO <<<")
 
     def load(self):
         if os.path.exists("dqn_model.pth"):
@@ -170,7 +177,7 @@ def get_camera_features():
 # ==========================================
 def calculate_reward(dist_features, action, score, prev_score):
     string = ""
-    reward = -0.02  # Custo fixo por frame (penalização por tempo)
+    reward = -0.02
     done = False
 
     # 1. Bónus de Score (Prioridade Máxima)
@@ -186,7 +193,7 @@ def calculate_reward(dist_features, action, score, prev_score):
     # Se houver parede à DIREITA
     if prox_direita > threshold:
         if action in [1, 3]: # Ações de virar à ESQUERDA (1:suave, 3:forte)
-            reward += prox_direita * 0.5  # Bónus: quanto mais perto da parede, mais ganha por virar
+            reward += prox_direita * 0.1  # Bónus: quanto mais perto da parede, mais ganha por virar
             # print("Boa! A fugir da parede da direita.")
         elif action in [2, 4]: # Se tentar virar para CIMA da parede
             reward -= prox_direita * 1.0  # Penalização pesada
@@ -194,20 +201,20 @@ def calculate_reward(dist_features, action, score, prev_score):
     # Se houver parede à ESQUERDA
     if prox_esquerda > threshold:
         if action in [2, 4]: # Ações de virar à DIREITA (2:suave, 4:forte)
-            reward += prox_esquerda * 0.5
+            reward += prox_esquerda * 0.1
             # print("Boa! A fugir da parede da esquerda.")
         elif action in [1, 3]:
-            reward -= prox_esquerda * 0.5
+            reward -= prox_esquerda * 1.0
 
-    # 3. Penalizar virar em retas (sem paredes próximas)
-    # Se não há paredes e ele decide virar em vez de ir em frente
-    if prox_direita < 0.1 and prox_esquerda < 0.1:
-        if action != 0: # Se não está a ir em frente (Ação 0)
-            reward -= 0.1 
+    if action == 0: # Se não está a ir em frente (Ação 0)
+        reward += 0.1
 
     # 2. Sensores e Colisão
     max_sensor = max(dist_features)
-    if max_sensor > 0.9:
+    if max_sensor > 0.35:
+        reward -= 0.5
+        #print("Close")
+    elif max_sensor > 0.45:
         reward -= 150.0 # Penalização pesada
         string += "-150.0"
         done = True
@@ -232,26 +239,9 @@ def calculate_reward(dist_features, action, score, prev_score):
 
 def request_reset():
     print("Enviando RESET...")
-    emitter.send("RESET".encode('utf-8'))
+    emitter.send("RESET\0".encode('utf-8'))
     leftMotor.setVelocity(0.0)
     rightMotor.setVelocity(0.0)
-
-    while receiver.getQueueLength() > 0:
-        receiver.nextPacket()
-    
-    got_ack = False
-    for _ in range(100):
-        if robot.step(timeStep) == -1: break
-        while receiver.getQueueLength() > 0:
-            data = receiver.getBytes() # <--- Aqui também
-            if len(data) == 4:
-                new_score = struct.unpack('<i', data)[0]
-                if new_score == 0:
-                    got_ack = True
-            receiver.nextPacket()
-        if got_ack:
-            print("Reset confirmado pelo Supervisor.")
-            break
     return 0
 
 # ==========================================
@@ -284,7 +274,7 @@ while robot.step(timeStep) != -1:
 
     if receiver.getQueueLength() > 0:
         while receiver.getQueueLength() > 0:
-            data = receiver.getBytes()  # Usar getBytes em vez de getData
+            data = receiver.getBytes()
 
             if len(data) == 4:
                 try:
@@ -321,7 +311,7 @@ while robot.step(timeStep) != -1:
                 if score >= best_score:
                     best_score = score
                     agent.save()
-                    agent.save_memory() # <--- SALVA A MEMÓRIA AQUI
+                    agent.save_memory()
                     no_improvement_resets = 0
                     print(f">>> RECORDE BATIDO: {best_score}")
                 else:
@@ -332,8 +322,7 @@ while robot.step(timeStep) != -1:
                         agent.epsilon = 0.5 
                         no_improvement_resets = 0
             
-            # FAZ APENAS UM RESET
-            previous_score = request_reset() 
+            previous_score = request_reset()
             total_reward_episodio = 0
             no_progress_steps = 0
             current_state = None
