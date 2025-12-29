@@ -6,6 +6,9 @@ import pickle
 import struct
 from controller import Robot
 
+if not os.path.exists("backup"):
+    os.makedirs("backup")
+
 TRAINING_MODE = True
 POPULATION_SIZE = 20 if TRAINING_MODE else 1
 MUTATION_RATE = 0.1
@@ -14,26 +17,18 @@ MUTATION_SCALE = 0.4
 class NeuralNetwork:
     def __init__(self, input_dim):
         self.input_size = input_dim
-        
-        # Aumentamos a complexidade mas com moderação para o Genético funcionar
-        # Camada 1: 64 neurónios (Processa os inputs brutos)
         self.W1 = np.random.randn(input_dim, 64) * 0.5
         self.b1 = np.zeros(64)
-        
-        # Camada 2: 32 neurónios (Combina as features, ex: "Parede à frente + Esquina")
         self.W2 = np.random.randn(64, 32) * 0.5
         self.b2 = np.zeros(32)
-        
-        # Output: 2 neurónios (Motores)
         self.W3 = np.random.randn(32, 2) * 0.5
         self.b3 = np.zeros(2)
 
     def forward(self, x):
-        # Passagem pela rede
         h1 = np.tanh(x @ self.W1 + self.b1)
         h2 = np.tanh(h1 @ self.W2 + self.b2)
         out = np.tanh(h2 @ self.W3 + self.b3)
-        return out # Devolve valores entre -1 e 1
+        return out 
 
     def clone(self):
         c = NeuralNetwork(self.input_size)
@@ -114,8 +109,6 @@ def get_sensor_values():
     return normalized
 
 def get_camera_features():
-    # Simplificação: Usar a camara apenas se necessário. 
-    # Para passar a primeira curva, os sensores de distancia sao 90% do trabalho.
     img = camera.getImage()
     if img is None: return np.zeros(3)
     x, y = width // 2, height // 2
@@ -145,25 +138,15 @@ def calculate_reward(sensors, vL, vR, score, prev_score):
     
     linear_velocity = (vL + vR) / (2 * max_speed)
     
-    # 2. SE ESTIVER A RASPAR (Entre 0.48 e 0.60)
     if max_proximity > SOFT_COLLISION:
-        # Penalização pesada mas não termina.
-        # Tem de ser superior ao ganho da velocidade (que é max 1.0)
-        # Assim o reward líquido é negativo (ex: 1.0 - 2.0 = -1.0)
-        reward = linear_velocity - 2.0 
-        
-        # Opcional: Penalizar também a rotação para ele não ficar a "moer" na parede
-        
-    # 3. SE ESTIVER NA ZONA DE PERIGO (Entre 0.30 e 0.48)
+        reward = linear_velocity - 2.0
+
     elif max_proximity > DANGER_ZONE:
         safety_factor = (SOFT_COLLISION - max_proximity) / (SOFT_COLLISION - DANGER_ZONE)
         
         # Eleva ao quadrado para a penalização crescer rápido quando se aproxima do 0.48
         safety_factor = max(0, safety_factor ** 2)
-        
         reward = linear_velocity * safety_factor
-        
-    # 4. ZONA SEGURA (< 0.30)
     else:
         # Reward pura baseada na velocidade
         reward = linear_velocity
