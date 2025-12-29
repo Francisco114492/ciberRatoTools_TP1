@@ -305,7 +305,7 @@ int main(int argc, char **argv)
             if (dataSize >= 5 && strncmp(msg, "RESET", 5) == 0) {
                 static double lastResetTime = -1.0;
                 if (supervisor->getTime() > lastResetTime + 0.5) { 
-                    std::cout << ">>> SUPERVISOR: Executando RESET e limpando fila... <<<" << std::endl;
+                    std::cout << ">>> SUPERVISOR: RESET <<<" << std::endl;
                     
                     trans_field->setSFVec3f(start_pos);
                     webots::Field *rot_field = epuck_node->getField("rotation");

@@ -1,139 +1,82 @@
-"""
-C2_RL_Agent.py - DQN corrigido (colisão, reward e estado)
-"""
-import struct
-import random
+# webots/C2_pClient_rl/C2_pClient_rl.py
+
 import numpy as np
-import torch
-import torch.nn as nn
-import torch.optim as optim
 import os
 import pickle
+import struct
 from controller import Robot
 
-TRAINING_MODE = True 
-MAX_NO_PROGRESS = 800
-# ==========================================
-# 1. REDE NEURONAL (DQN)
-# ==========================================
-class DQN(nn.Module):
-    def __init__(self, input_dim, output_dim):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, 64),
-            nn.LeakyReLU(0.1),
-            nn.Linear(64, 64),
-            nn.LeakyReLU(0.1),
-            nn.Linear(64, output_dim)
-        )
+TRAINING_MODE = True
+POPULATION_SIZE = 20 if TRAINING_MODE else 1
+MUTATION_RATE = 0.1
+MUTATION_SCALE = 0.4
+
+class NeuralNetwork:
+    def __init__(self, input_dim):
+        self.input_size = input_dim
+        
+        # Aumentamos a complexidade mas com moderação para o Genético funcionar
+        # Camada 1: 64 neurónios (Processa os inputs brutos)
+        self.W1 = np.random.randn(input_dim, 64) * 0.5
+        self.b1 = np.zeros(64)
+        
+        # Camada 2: 32 neurónios (Combina as features, ex: "Parede à frente + Esquina")
+        self.W2 = np.random.randn(64, 32) * 0.5
+        self.b2 = np.zeros(32)
+        
+        # Output: 2 neurónios (Motores)
+        self.W3 = np.random.randn(32, 2) * 0.5
+        self.b3 = np.zeros(2)
 
     def forward(self, x):
-        return self.net(x)
+        # Passagem pela rede
+        h1 = np.tanh(x @ self.W1 + self.b1)
+        h2 = np.tanh(h1 @ self.W2 + self.b2)
+        out = np.tanh(h2 @ self.W3 + self.b3)
+        return out # Devolve valores entre -1 e 1
 
-# ==========================================
-# 2. AGENTE DQN
-# ==========================================
-class DQNAgent:
-    def __init__(self, state_dim, action_dim):
-        self.action_dim = action_dim
-        self.device = torch.device("cpu")
+    def clone(self):
+        c = NeuralNetwork(self.input_size)
+        c.W1 = self.W1.copy()
+        c.b1 = self.b1.copy()
+        c.W2 = self.W2.copy()
+        c.b2 = self.b2.copy()
+        c.W3 = self.W3.copy()
+        c.b3 = self.b3.copy()
+        return c
 
-        self.model = DQN(state_dim, action_dim).to(self.device)
-        self.optimizer = optim.Adam(self.model.parameters(), lr=5e-4)
-        self.criterion = nn.MSELoss()
+    def mutate(self):
+        # Agora mutamos as 3 camadas
+        for p in [self.W1, self.b1, self.W2, self.b2, self.W3, self.b3]:
+            mask = np.random.rand(*p.shape) < MUTATION_RATE
+            # A escala da mutação é importante. 
+            noise = np.random.randn(*p.shape) * MUTATION_SCALE
+            p += mask * noise
 
-        self.epsilon = 1.0 if TRAINING_MODE else 0.0 
-        self.epsilon_min = 0.15
-        self.epsilon_decay = 0.9995
-        self.gamma = 0.99 
+    def save(self, filename="best_policy.pkl"):
+        # Pequena correção para garantir que guarda no sitio certo
+        if not filename.endswith(".pkl"): filename += ".pkl"
+        
+        with open(filename, "wb") as f:
+            pickle.dump(self, f)
+        print(f">>> POLICY GUARDADA: {filename} <<<")
 
-        self.memory = []
-        self.batch_size = 128
-        self.memory_capacity = 50000
-        self.train_step_counter = 0
-
-    def select_action(self, state, training=True):
-        if training and random.random() < self.epsilon:
-            return random.randint(0, self.action_dim - 1)
-
-        with torch.no_grad():
-            s = torch.FloatTensor(state).unsqueeze(0).to(self.device)
-            return torch.argmax(self.model(s)).item()
-
-    def store_experience(self, s, a, r, ns, done):
-        if len(self.memory) >= self.memory_capacity:
-            self.memory.pop(0)
-        self.memory.append((s, a, r, ns, done))
-
-    def train(self):
-        if len(self.memory) < self.batch_size:
-            return
-
-        batch = random.sample(self.memory, self.batch_size)
-        s, a, r, ns, d = zip(*batch)
-
-        s  = torch.FloatTensor(s).to(self.device)
-        ns = torch.FloatTensor(ns).to(self.device)
-        r  = torch.FloatTensor(r).to(self.device)
-        a  = torch.LongTensor(a).unsqueeze(1).to(self.device)
-        d  = torch.FloatTensor(d).to(self.device)
-
-        q = self.model(s).gather(1, a).squeeze()
-
-        with torch.no_grad():
-            q_next = self.model(ns).max(1)[0]
-            q_target = r + (1 - d) * self.gamma * q_next
-
-        loss = self.criterion(q, q_target)
-
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
-
-        if self.epsilon > self.epsilon_min:
-            self.epsilon *= self.epsilon_decay
-            self.train_step_counter += 1
-            if self.train_step_counter % 500 == 0:
-                print(f"epsilon: {self.epsilon:.4f} | memory: {len(self.memory)}")
-
-    def save(self):
-        torch.save(self.model.state_dict(), "dqn_model.pth")
-
-    def save_memory(self):
-        # Guarda apenas as últimas 30.000 experiências para o ficheiro não ser gigante
-        with open("dqn_memory.pkl", "wb") as f:
-            pickle.dump(self.memory[-30000:], f)
-        print(">>> MEMÓRIA DE EXPERIÊNCIA GUARDADA EM DISCO <<<")
-
-    def load(self):
-        if os.path.exists("dqn_model.pth"):
-            self.model.load_state_dict(torch.load("dqn_model.pth"))
-            self.model.eval()
-            print(">>> MODELO CARREGADO <<<")
-
-    def load_memory(self):
-        if os.path.exists("dqn_memory.pkl"):
+    @staticmethod
+    def load(path="best_policy.pkl"):
+        if os.path.exists(path):
             try:
-                with open("dqn_memory.pkl", "rb") as f:
-                    # Carrega a lista do ficheiro
-                    loaded_memory = pickle.load(f)
-                    
-                    # Garante que não excedemos a capacidade atual (caso tenhas mudado o limite)
-                    if len(loaded_memory) > self.memory_capacity:
-                        self.memory = loaded_memory[-self.memory_capacity:]
-                    else:
-                        self.memory = loaded_memory
-                        
-                print(f">>> MEMÓRIA CARREGADA: {len(self.memory)} experiências recuperadas.")
-            except Exception as e:
-                print(f"!!! ERRO AO CARREGAR MEMÓRIA: {e} (Começando com memória vazia)")
-                self.memory = []
-        else:
-            print(">>> Nenhuma memória encontrada (dqn_memory.pkl). Começando do zero.")
+                with open(path, "rb") as f:
+                    net = pickle.load(f)
+                    print(">>> POLICY CARREGADA COM SUCESSO <<<")
+                    return net
+            except:
+                print(">>> AVISO: Erro ao carregar Policy (Formato incompatível). Começando do zero.")
+                return None
+        return None
 
-# ==========================================
-# 3. SETUP DO ROBÔ
-# ==========================================
+# ======================================================
+# ROBOT SETUP
+# ======================================================
 robot = Robot()
 timeStep = int(robot.getBasicTimeStep())
 
@@ -149,205 +92,224 @@ rightMotor = robot.getDevice("right wheel motor")
 leftMotor.setPosition(float('inf'))
 rightMotor.setPosition(float('inf'))
 
+max_speed = 6.28 # Velocidade maxima tipica do e-puck
+
 camera = robot.getDevice("camera")
 camera.enable(timeStep)
-width  = camera.getWidth()
-height = camera.getHeight()
+width, height = camera.getWidth(), camera.getHeight()
 
 dist_sensors = [robot.getDevice(f'ps{i}') for i in range(8)]
 for s in dist_sensors:
     s.enable(timeStep)
 
-# ==========================================
-# 4. AÇÕES E AGENTE
-# ==========================================
-CRUISE_SPEED = 3.0
-actions = [
-    (CRUISE_SPEED, CRUISE_SPEED),
-    (CRUISE_SPEED*0.5, CRUISE_SPEED),
-    (CRUISE_SPEED, CRUISE_SPEED*0.5),
-    (-CRUISE_SPEED*0.5, CRUISE_SPEED),
-    (CRUISE_SPEED, -CRUISE_SPEED*0.5),
-]
-
-agent = DQNAgent(state_dim=13, action_dim=len(actions))
-if os.path.exists("dqn_model.pth"):
-    agent.load()
-    if not TRAINING_MODE:
-        agent.epsilon = 0.0
-agent.load_memory()
-previous_score = 0
-
-def normalize_sensors(v):
-    return [min(x / 4000.0, 1.0) for x in v]
+# ======================================================
+# HELPERS
+# ======================================================
+def get_sensor_values():
+    # No Webots e-puck: valores altos (4096) = perto, baixos (0) = longe
+    # Vamos inverter para: 1.0 = colisão, 0.0 = livre
+    raw_values = np.array([s.getValue() for s in dist_sensors])
+    # Clip para garantir limites e normalizar
+    normalized = np.clip(raw_values / 4000.0, 0.0, 1.0)
+    return normalized
 
 def get_camera_features():
+    # Simplificação: Usar a camara apenas se necessário. 
+    # Para passar a primeira curva, os sensores de distancia sao 90% do trabalho.
     img = camera.getImage()
-    if img is None:
-        return [0.0, 0.0, 0.0]
-
+    if img is None: return np.zeros(3)
     x, y = width // 2, height // 2
-    r = camera.imageGetRed(img, width, x, y)
-    g = camera.imageGetGreen(img, width, x, y)
-    b = camera.imageGetBlue(img, width, x, y)
-    return [r/255.0, g/255.0, b/255.0]
+    return np.array([
+        camera.imageGetRed(img, width, x, y) / 255.0,
+        camera.imageGetGreen(img, width, x, y) / 255.0,
+        camera.imageGetBlue(img, width, x, y) / 255.0
+    ])
 
-# ==========================================
-# 5. REWARD (CORRIGIDO)
-# ==========================================
-def calculate_reward(dist_features, action, score, prev_score):
-    string = ""
-    reward = -0.02
+# ======================================================
+# REWARD FUNCTION SIMPLIFICADA
+# ======================================================
+def calculate_reward(sensors, vL, vR, score, prev_score):
     done = False
-
-    # 1. Bónus de Score
-    if score > prev_score:
-        reward += 150.0
-
-    # --- Lógica de Paredes/Colisão CORRIGIDA ---
-    max_sensor = max(dist_features)
     
-    if max_sensor > 0.55:
-        reward -= 150.0
-        done = True
-        return reward, done # Sai logo da função
-
-    # # 2º Verificar PERIGO (Apenas aviso)
-    # if max_sensor > 0.35:
-    #     reward -= 0.5 
-
-    if max_sensor > 0.2:
-        penalty = (max_sensor * 10.0) ** 2  / 10.0 
-        reward -= penalty 
+    HARD_COLLISION = 0.60  # Morte imediata
+    SOFT_COLLISION = 0.48  # Começa a tocar/raspar (Zona vermelha)
+    DANGER_ZONE    = 0.30  # Zona de aviso
     
-    # -------------------------------------------
-
-    prox_direita = max(dist_features[0], dist_features[1], dist_features[2])
-    prox_esquerda = max(dist_features[5], dist_features[6], dist_features[7])
+    max_proximity = np.max(sensors) 
     
-    threshold = 0.2 
-
-    # Se houver parede à DIREITA
-    if prox_direita > threshold:
-        if action in [1, 3]: 
-            reward += prox_direita * 0.1
-        elif action in [2, 4]: 
-            reward -= prox_direita * 1.0 
-
-    # Se houver parede à ESQUERDA
-    if prox_esquerda > threshold:
-        if action in [2, 4]: 
-            reward += prox_esquerda * 0.1
-        elif action in [1, 3]:
-            reward -= prox_esquerda * 1.0
-
-    if action == 0: 
-        reward += 0.1
-
-    vL, vR = actions[action]
-    speed = (vL + vR) / 10.0 
-
-    if speed > 0:
-        reward += speed * 0.5
+    # 1. MORTE (Colisão Forte)
+    if max_proximity > HARD_COLLISION: 
+        return -100.0, True 
+    
+    # --- CÁLCULO DA REWARD ---
+    
+    linear_velocity = (vL + vR) / (2 * max_speed)
+    
+    # 2. SE ESTIVER A RASPAR (Entre 0.48 e 0.60)
+    if max_proximity > SOFT_COLLISION:
+        # Penalização pesada mas não termina.
+        # Tem de ser superior ao ganho da velocidade (que é max 1.0)
+        # Assim o reward líquido é negativo (ex: 1.0 - 2.0 = -1.0)
+        reward = linear_velocity - 2.0 
+        
+        # Opcional: Penalizar também a rotação para ele não ficar a "moer" na parede
+        
+    # 3. SE ESTIVER NA ZONA DE PERIGO (Entre 0.30 e 0.48)
+    elif max_proximity > DANGER_ZONE:
+        safety_factor = (SOFT_COLLISION - max_proximity) / (SOFT_COLLISION - DANGER_ZONE)
+        
+        # Eleva ao quadrado para a penalização crescer rápido quando se aproxima do 0.48
+        safety_factor = max(0, safety_factor ** 2)
+        
+        reward = linear_velocity * safety_factor
+        
+    # 4. ZONA SEGURA (< 0.30)
     else:
-        reward -= 1.5
+        # Reward pura baseada na velocidade
+        reward = linear_velocity
+
+    # Penalização por girar no sítio sem andar (Spinning)
+    diff = abs(vL - vR) / (2 * max_speed)
+    if diff > 0.8: 
+        reward -= 0.1
+
+    # Bónus por Checkpoint
+    if score > prev_score:
+        reward += 100.0
 
     return reward, done
 
 def request_reset():
-    print("Enviando RESET...")
-    emitter.send("RESET\0".encode('utf-8'))
-    leftMotor.setVelocity(0.0)
-    rightMotor.setVelocity(0.0)
+    # Limpar buffer
+    while receiver.getQueueLength() > 0: receiver.nextPacket()
+    
+    emitter.send(b"RESET")
+    leftMotor.setVelocity(0)
+    rightMotor.setVelocity(0)
+    
+    # Pequena pausa para garantir que o supervisor processa
+    robot.step(timeStep) 
     return 0
 
-# ==========================================
-# 6. LOOP PRINCIPAL
-# ==========================================
-current_state = None
-current_action = 0
-no_progress_steps = 0
+# ======================================================
+# EVOLUTION SETUP
+# ======================================================
+# Inputs: 8 sensores + 3 camara + 2 feedback motores = 13
+INPUT_DIM = 8 + 8 + 3 + 2 
+population = [NeuralNetwork(INPUT_DIM) for _ in range(POPULATION_SIZE)]
 
-best_score = float('-inf')
-no_improvement_resets = 0
-total_reward_episodio = 0
+best_policy = NeuralNetwork.load()
+best_fitness = -1e9
+
+# Se já existe um bom, ele é o pai de todos, mas com mutações para não estagnar
+if best_policy:
+    population[0] = best_policy.clone()
+    for i in range(1, POPULATION_SIZE):
+        population[i] = best_policy.clone()
+        population[i].mutate()
+
+# ======================================================
+# TRAINING LOOP
+# ======================================================
+policy_idx = 0
+current_nn = population[policy_idx]
+fitness = 0
+steps = 0
+previous_score = 0
+no_progress_counter = 0
+
+# Max steps por episódio
+MAX_STEPS = 1000 
+previous_dist = np.zeros(8) # Inicializa zerado
+
+print(f"--- INICIANDO GERAÇÃO 1 / INDIVIDUO {policy_idx} ---")
 
 while robot.step(timeStep) != -1:
-
-    # Atuar
-    vL, vR = actions[current_action]
+    
+    # 1. Ler Sensores
+    sensors = get_sensor_values() # 0 (longe) a 1 (perto)
+    cam = get_camera_features()
+    # Feedback dos motores (normalizado)
+    motor_feedback = np.array([leftMotor.getVelocity(), rightMotor.getVelocity()]) / max_speed
+    
+    # 2. Rede Neural
+    state = np.concatenate([sensors, previous_dist, cam, motor_feedback])
+    outputs = current_nn.forward(state) # [-1, 1]
+    
+    # 3. Controlar Motores (MUDANÇA IMPORTANTE)
+    # Permitir valores negativos para rotação no eixo
+    vL = outputs[0] * max_speed
+    vR = outputs[1] * max_speed
+    
     leftMotor.setVelocity(vL)
     rightMotor.setVelocity(vR)
+    
+    # 4. Receber Score do Supervisor
+    current_score = previous_score
+    while receiver.getQueueLength() > 0:
+        data = receiver.getBytes()
+        if len(data) == 4:
+            unpacked = struct.unpack('<i', data)[0]
+            # Filtro simples para garantir que lemos scores válidos
+            if unpacked >= current_score: 
+                current_score = unpacked
+        receiver.nextPacket()
+    
+    # 5. Calcular Fitness
+    step_reward, done = calculate_reward(sensors, vL, vR, current_score, previous_score)
+    fitness += step_reward
+    steps += 1
+    
+    # Detecção de estagnação (se o score não subir durante muito tempo)
+    if current_score > previous_score:
+        no_progress_counter = 0
+    else:
+        no_progress_counter += 1
+        
+    if no_progress_counter > 300: # Se ficar 10s sem progresso
+        done = True
+        fitness -= 10 # Penalização por ficar parado
+    
+    previous_score = current_score
+    previous_dist = sensors
 
-    raw = [s.getValue() for s in dist_sensors]
-    dist = normalize_sensors(raw)
-    cam  = get_camera_features()
-    vL_norm = leftMotor.getVelocity() / CRUISE_SPEED
-    vR_norm = rightMotor.getVelocity() / CRUISE_SPEED
-    next_state = dist + cam + [vL_norm, vR_norm]
-
-    # Score
-    score = previous_score
-
-    if receiver.getQueueLength() > 0:
-        while receiver.getQueueLength() > 0:
-            data = receiver.getBytes()
-
-            if len(data) == 4:
-                try:
-                    score = struct.unpack('<i', data)[0]
-                except Exception as e:
-                    print(f"Erro ao descompactar: {e}")
-            receiver.nextPacket()
-
-    if current_state is not None:
-        reward, done = calculate_reward(dist, current_action, score, previous_score)
-        total_reward_episodio += reward
-        if score > previous_score:
-            print(f"Prev score: {previous_score}; Curr score: {score}; Reward: {total_reward_episodio:.2f}; steps with no progress: {no_progress_steps}")
-            no_progress_steps = 0
-        else:
-            no_progress_steps += 1
-
-        if no_progress_steps % 100 == 0 and no_progress_steps != 0:
-            print(f"Prev score: {previous_score}; Curr score: {score}; Reward: {total_reward_episodio:.2f}; steps with no progress: {no_progress_steps}")
-
-        if TRAINING_MODE:
-            agent.store_experience(current_state, current_action, reward, next_state, done)
-
-        if done or (no_progress_steps > MAX_NO_PROGRESS):
-            # Parar motores
-            leftMotor.setVelocity(0.0)
-            rightMotor.setVelocity(0.0)
-            if score < 40 and agent.epsilon < 0.6:
-                agent.epsilon = 0.7
+    # 6. Fim do Episódio
+    if done or steps > MAX_STEPS:
+        # Normaliza fitness pelo tempo (opcional, mas ajuda a comparar passos curtos vs longos)
+        print(f"Indivíduo {policy_idx} | Score: {current_score} | Fitness: {fitness:.2f}")
+        
+        # Guardar melhor
+        if fitness > best_fitness:
+            best_fitness = fitness
+            best_policy = current_nn.clone()
             
-            if TRAINING_MODE:
-                print(f"Treinando... (Score Final: {score})")
-                for _ in range(250):
-                    agent.train()
+            # Guarda o ficheiro normal
+            best_policy.save("best_policy.pkl")
+            
+            if current_score > 50:
+                best_policy.save(f"backup/best_policy_score_{current_score}_fit_{int(fitness)}.pkl")
                 
-                if score >= best_score:
-                    best_score = score
-                    agent.save()
-                    agent.save_memory()
-                    no_improvement_resets = 0
-                    print(f">>> RECORDE BATIDO: {best_score}")
-                else:
-                    no_improvement_resets += 1
-                    if no_improvement_resets >= 10:
-                        print(">>> RECUPERANDO MODELO ANTERIOR...")
-                        agent.load()
-                        agent.epsilon = 0.5 
-                        no_improvement_resets = 0
+            print(f"🌟 NOVO RECORDISTA! Fitness: {best_fitness:.2f}")
+        
+        # Próximo individuo
+        policy_idx += 1
+        
+        # Se acabou a geração
+        if policy_idx >= POPULATION_SIZE:
+            print(f"\n=== NOVA GERAÇÃO (Melhor Fitness: {best_fitness:.2f}) ===")
+            policy_idx = 0
             
-            previous_score = request_reset()
-            total_reward_episodio = 0
-            no_progress_steps = 0
-            current_state = None
-            continue
-
-
-    previous_score = score
-    current_action = agent.select_action(next_state, TRAINING_MODE)
-    current_state = next_state
+            # Elitismo: O melhor mantém-se
+            population[0] = best_policy.clone()
+            
+            # Os outros são mutações
+            for i in range(1, POPULATION_SIZE):
+                population[i] = best_policy.clone()
+                population[i].mutate()
+        # Preparar próximo
+        current_nn = population[policy_idx]
+        fitness = 0
+        steps = 0
+        previous_score = request_reset()
+        no_progress_counter = 0
+        previous_dist = np.zeros(8)
