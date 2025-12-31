@@ -10,9 +10,9 @@ if not os.path.exists("backup"):
     os.makedirs("backup")
 
 TRAINING_MODE = True
-POPULATION_SIZE = 20 if TRAINING_MODE else 1
-MUTATION_RATE = 0.1
-MUTATION_SCALE = 0.4
+POPULATION_SIZE = 10 if TRAINING_MODE else 1
+MUTATION_RATE = 0.02
+MUTATION_SCALE = 0.05
 
 class NeuralNetwork:
     def __init__(self, input_dim):
@@ -87,7 +87,7 @@ rightMotor = robot.getDevice("right wheel motor")
 leftMotor.setPosition(float('inf'))
 rightMotor.setPosition(float('inf'))
 
-max_speed = 6.28 # Velocidade maxima tipica do e-puck
+max_speed = 6.28
 
 camera = robot.getDevice("camera")
 camera.enable(timeStep)
@@ -100,12 +100,12 @@ for s in dist_sensors:
 # ======================================================
 # HELPERS
 # ======================================================
+n_max = (1/4095)*100
+n_min = (1/34)*100
 def get_sensor_values():
-    # No Webots e-puck: valores altos (4096) = perto, baixos (0) = longe
-    # Vamos inverter para: 1.0 = colisão, 0.0 = livre
-    raw_values = np.array([s.getValue() for s in dist_sensors])
-    # Clip para garantir limites e normalizar
-    normalized = np.clip(raw_values / 4000.0, 0.0, 1.0)
+    raw_values = np.array([max(s.getValue(),0.0001) for s in dist_sensors])
+    normalized = (1/(raw_values))*100
+    normalized = np.clip((normalized - n_min) / (n_max - n_min), 0.0, 1.0)
     return normalized
 
 def get_camera_features():
@@ -121,46 +121,70 @@ def get_camera_features():
 # ======================================================
 # REWARD FUNCTION SIMPLIFICADA
 # ======================================================
-def calculate_reward(sensors, vL, vR, score, prev_score):
+def calculate_reward(sensors, vL, vR, score, prev_score, prev_max_sensor):
     done = False
-    
-    HARD_COLLISION = 0.60  # Morte imediata
-    SOFT_COLLISION = 0.48  # Começa a tocar/raspar (Zona vermelha)
-    DANGER_ZONE    = 0.30  # Zona de aviso
-    
-    max_proximity = np.max(sensors) 
-    
-    # 1. MORTE (Colisão Forte)
-    if max_proximity > HARD_COLLISION: 
-        return -100.0, True 
-    
-    # --- CÁLCULO DA REWARD ---
-    
-    linear_velocity = (vL + vR) / (2 * max_speed)
-    
-    if max_proximity > SOFT_COLLISION:
-        reward = linear_velocity - 2.0
+    reward = 0.0
 
-    elif max_proximity > DANGER_ZONE:
-        safety_factor = (SOFT_COLLISION - max_proximity) / (SOFT_COLLISION - DANGER_ZONE)
-        
-        # Eleva ao quadrado para a penalização crescer rápido quando se aproxima do 0.48
-        safety_factor = max(0, safety_factor ** 2)
-        reward = linear_velocity * safety_factor
+    # --- 1. LIMITES ---
+    HARD_COLLISION = 0.95
+    max_sensor = np.max(sensors)
+
+    if max_sensor > HARD_COLLISION:
+        return -100.0, True, max_sensor
+
+    # --- 2. MOVIMENTOS ---
+    linear = (vL + vR) / (2 * max_speed)
+    angular = abs(vL - vR) / (2 * max_speed)
+
+    # --- 3. LÓGICA "ANTI-PIÃO" (Reforçada) ---
+    # Se ele está de costas para a parede (sensores baixos), não pode rodar!
+    if max_sensor < 0.3:
+        if angular > 0.1: 
+            reward -= 2.0 
+        if linear > 0.5:
+            reward += 1.0 
+            
     else:
-        # Reward pura baseada na velocidade
-        reward = linear_velocity
+        
+        left_pressure = np.mean(sensors[5:8])  # Obstáculo à Esquerda -> Virar Direita
+        right_pressure = np.mean(sensors[0:3]) # Obstáculo à Direita -> Virar Esquerda
+        
+        turning_left = vR > vL
+        turning_right = vL > vR
+        
+        ACTIVATION_THRESHOLD = 0.4
 
-    # Penalização por girar no sítio sem andar (Spinning)
-    diff = abs(vL - vR) / (2 * max_speed)
-    if diff > 0.8: 
-        reward -= 0.1
+        if right_pressure > ACTIVATION_THRESHOLD:
+            if turning_left: 
+                reward += right_pressure * 2.0 
+            elif turning_right: 
+                reward -= right_pressure * 5.0
 
-    # Bónus por Checkpoint
+        if left_pressure > ACTIVATION_THRESHOLD:
+            if turning_right: 
+                reward += left_pressure * 2.0
+            elif turning_left: 
+                reward -= left_pressure * 5.0
+
+    # --- 4. DERIVADA ---
+    diff = prev_max_sensor - max_sensor
+    
+    # Só recompensa derivada se estiver em perigo
+    if prev_max_sensor > 0.4:
+        if diff > 0.01: 
+            reward += 1.0
+        elif diff < -0.01:
+            reward -= 0.5 
+
+    # Velocidade Base
+    if linear > 0: reward += 0.2
+    else: reward -= 1.0
+
+    # --- 5. CHECKPOINTS ---
     if score > prev_score:
-        reward += 100.0
+        reward += 1000.0
 
-    return reward, done
+    return reward, done, max_sensor
 
 def request_reset():
     # Limpar buffer
@@ -178,10 +202,11 @@ def request_reset():
 # EVOLUTION SETUP
 # ======================================================
 # Inputs: 8 sensores + 3 camara + 2 feedback motores = 13
-INPUT_DIM = 8 + 8 + 3 + 2 
+INPUT_DIM = 8 + 8
 population = [NeuralNetwork(INPUT_DIM) for _ in range(POPULATION_SIZE)]
 
 best_policy = NeuralNetwork.load()
+best_score = -1e9
 best_fitness = -1e9
 
 # Se já existe um bom, ele é o pai de todos, mas com mutações para não estagnar
@@ -202,21 +227,21 @@ previous_score = 0
 no_progress_counter = 0
 
 # Max steps por episódio
-MAX_STEPS = 1000 
+MAX_STEPS = 10000 
 previous_dist = np.zeros(8) # Inicializa zerado
 
 print(f"--- INICIANDO GERAÇÃO 1 / INDIVIDUO {policy_idx} ---")
-
+max_sensor = 0.0
 while robot.step(timeStep) != -1:
     
     # 1. Ler Sensores
     sensors = get_sensor_values() # 0 (longe) a 1 (perto)
-    cam = get_camera_features()
+    #cam = get_camera_features()
     # Feedback dos motores (normalizado)
-    motor_feedback = np.array([leftMotor.getVelocity(), rightMotor.getVelocity()]) / max_speed
+    #motor_feedback = np.array([leftMotor.getVelocity(), rightMotor.getVelocity()]) / max_speed
     
     # 2. Rede Neural
-    state = np.concatenate([sensors, previous_dist, cam, motor_feedback])
+    state = np.concatenate([sensors, previous_dist])
     outputs = current_nn.forward(state) # [-1, 1]
     
     # 3. Controlar Motores (MUDANÇA IMPORTANTE)
@@ -239,7 +264,7 @@ while robot.step(timeStep) != -1:
         receiver.nextPacket()
     
     # 5. Calcular Fitness
-    step_reward, done = calculate_reward(sensors, vL, vR, current_score, previous_score)
+    step_reward, done, max_sensor = calculate_reward(sensors, vL, vR, current_score, previous_score, max_sensor)
     fitness += step_reward
     steps += 1
     
@@ -249,7 +274,7 @@ while robot.step(timeStep) != -1:
     else:
         no_progress_counter += 1
         
-    if no_progress_counter > 300: # Se ficar 10s sem progresso
+    if no_progress_counter > 800: # Se ficar 10s sem progresso
         done = True
         fitness -= 10 # Penalização por ficar parado
     
@@ -258,21 +283,40 @@ while robot.step(timeStep) != -1:
 
     # 6. Fim do Episódio
     if done or steps > MAX_STEPS:
+        if current_score < 60:
+            fitness -= 10000
         # Normaliza fitness pelo tempo (opcional, mas ajuda a comparar passos curtos vs longos)
         print(f"Indivíduo {policy_idx} | Score: {current_score} | Fitness: {fitness:.2f}")
+        saved = False # Flag para saber se guardamos
         
-        # Guardar melhor
-        if fitness > best_fitness:
-            best_fitness = fitness
-            best_policy = current_nn.clone()
+        # CASO 1: Bateu o recorde de distância (O MAIS IMPORTANTE)
+        if current_score > best_score:
+            best_score = current_score   # <--- FALTAVA ISTO!
+            best_fitness = fitness       # Atualiza o fitness associado a este score
             
-            # Guarda o ficheiro normal
+            best_policy = current_nn.clone()
             best_policy.save("best_policy.pkl")
             
-            if current_score > 50:
+            # Guardar backup histórico
+            if current_score >= 50:
                 best_policy.save(f"backup/best_policy_score_{current_score}_fit_{int(fitness)}.pkl")
                 
-            print(f"🌟 NOVO RECORDISTA! Fitness: {best_fitness:.2f}")
+            print(f"🏆 NOVO RECORDE ABSOLUTO: {best_score} pontos! (Fitness: {fitness:.2f})")
+            saved = True
+            
+        # CASO 2: Chegou ao mesmo sítio, mas foi mais eficiente (Maior Fitness)
+        elif current_score == best_score and fitness > best_fitness:
+            best_fitness = fitness
+            
+            best_policy = current_nn.clone()
+            best_policy.save("best_policy.pkl")
+            
+            # Opcional: Atualizar o backup se quiseres a versão mais eficiente desse score
+            if current_score >= 50:
+                best_policy.save(f"backup/best_policy_score_{current_score}_fit_{int(fitness)}.pkl")
+
+            print(f"⚡ MELHORIA DE EFICIÊNCIA: Score igual ({best_score}), mas melhor Fitness.")
+            saved = True
         
         # Próximo individuo
         policy_idx += 1
@@ -296,3 +340,4 @@ while robot.step(timeStep) != -1:
         previous_score = request_reset()
         no_progress_counter = 0
         previous_dist = np.zeros(8)
+        max_sensor = 0.0

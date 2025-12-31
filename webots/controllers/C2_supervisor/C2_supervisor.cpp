@@ -340,17 +340,16 @@ int main(int argc, char **argv)
 
         // Check if the simulation time has exceeded the maximum duration.
         
-        // if (currentTime >= MAX_TIME_SECONDS)
-        // {
-        //     // The argument 0 indicates a successful exit.
-        //     scoreText = "Final Score: " + std::to_string(scoreControl);
-        // }
-        // else {
-        //     // Increment the score (this is just an example, replace with your logic)
-
-        // }
-        update_score();
-        scoreText = "Score: " + std::to_string(scoreControl);
+        if (currentTime >= MAX_TIME_SECONDS)
+        {
+            // The argument 0 indicates a successful exit.
+            scoreText = "Final Score: " + std::to_string(scoreControl);
+        }
+        else {
+            // Increment the score (this is just an example, replace with your logic)
+            update_score();
+            scoreText = "Score: " + std::to_string(scoreControl);
+        }
         // Display the label
         supervisor->setLabel(0, scoreText, 0.6, 0.01, 0.1, 0xFF0000, 0.0, "Arial");
     }
